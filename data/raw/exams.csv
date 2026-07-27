@@ -1,0 +1,8 @@
+exam_id,patient_id,exam_name,status,requested_at,resulted_at,result
+EX-1001,PAC-0001,hemoglobina glicada,completed,2026-06-18,2026-06-20,7.8%
+EX-1002,PAC-0001,creatinina,pending,2026-07-20,,
+EX-1003,PAC-0001,eletrocardiograma,pending,2026-07-27,,
+EX-2001,PAC-0002,creatinina,completed,2026-07-02,2026-07-03,1.0 mg/dL
+EX-2002,PAC-0002,potássio,pending,2026-07-20,,
+EX-3001,PAC-0003,hemoglobina glicada,completed,2026-06-25,2026-06-26,8.1%
+EX-3002,PAC-0003,relação albumina-creatinina,pending,2026-07-10,,

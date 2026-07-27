@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clinical-assistant"
+version = "0.1.0"
+description = "Assistente clínico institucional com LangChain, LangGraph e LoRA"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "langchain-core>=1.0,<2.0",
+  "langgraph>=1.0,<2.0",
+  "python-dotenv>=1.0,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ipykernel>=6.29,<8.0",
+  "nbformat>=5.10,<6.0",
+  "pytest>=8.0,<10.0",
+]
+training = [
+  "accelerate>=1.0,<2.0",
+  "bitsandbytes>=0.45,<1.0",
+  "datasets>=3.0,<5.0",
+  "evaluate>=0.4,<1.0",
+  "langchain-huggingface>=1.0,<2.0",
+  "peft>=0.18,<1.0",
+  "rouge-score>=0.1.2,<1.0",
+  "torch>=2.5,<3.0",
+  "transformers>=4.50,<6.0",
+  "trl>=0.25,<1.0",
+]
+
+[project.scripts]
+clinical-assistant = "clinical_assistant.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

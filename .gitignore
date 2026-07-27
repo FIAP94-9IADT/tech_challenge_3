@@ -209,6 +209,16 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Artefatos locais do projeto
+.context/
+artifacts/
+logs/
+data/processed/*.db
+data/processed/*.jsonl
+data/processed/*.json
+models/
+*.sqlite
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
