@@ -1,32 +1,15 @@
-"""Regras explícitas de risco e limites de atuação."""
-
-from __future__ import annotations
-
+"""Triagem textual conservadora e verificação de saídas; não é validação clínica."""
 import re
+import unicodedata
 from dataclasses import dataclass
 
+HUMAN_REVIEW_NOTICE = "Conteúdo para revisão do profissional responsável; nenhuma conduta foi autorizada."
+CRITICAL_NOTICE = "ALERTA DE PRIORIZAÇÃO: sinais textuais requerem avaliação presencial pela equipe. O sistema não estabelece diagnóstico."
+REFUSAL = "Solicitação fora do escopo: não serão fornecidos diagnóstico, prescrição, dose ou alteração terapêutica."
+UNSAFE_OUTPUT = re.compile(r"\b(tome|administre|prescrevo|inicie|suspenda|diagn[oó]stico confirmado)\b|\d+\s*(mg|mcg|comprimidos)\b", re.I)
 
-CRITICAL_PATTERNS = {
-    "dor torácica com sinal associado": re.compile(r"dor (?:no peito|tor[aá]cica).*(?:dispneia|falta de ar|s[ií]ncope|desmai|sudorese|confus)", re.I | re.S),
-    "possível deterioração infecciosa": re.compile(r"(?:infec|febre|sepse).*(?:hipotens|confus|falta de ar|olig[uú]ria|lactato)", re.I | re.S),
-    "possível alteração neurológica aguda": re.compile(r"(?:fraqueza|paralisia|fala).*(?:s[uú]bit|repentin|um lado)", re.I | re.S),
-}
-
-PRESCRIPTION_REQUEST = re.compile(
-    r"\b(?:prescrev|receit|qual (?:rem[eé]dio|medicamento)|dose|dosagem|suspend|ajust(?:e|ar) (?:a )?medica)",
-    re.I,
-)
-
-UNSAFE_OUTPUT = re.compile(
-    r"\b(?:tome|administre|prescrevo|inicie|suspenda|aumente a dose|reduza a dose)\b",
-    re.I,
-)
-
-HUMAN_REVIEW_NOTICE = (
-    "A resposta organiza informações para apoio profissional e requer validação "
-    "da equipe assistencial antes de qualquer decisão clínica."
-)
-
+def normalize(text):
+    return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if unicodedata.category(c) != "Mn")
 
 @dataclass(frozen=True)
 class SafetyAssessment:
@@ -34,31 +17,30 @@ class SafetyAssessment:
     alerts: tuple[str, ...]
     prescription_request: bool
 
+def assess_input(question):
+    text = normalize(question)
+    # Negações locais não ativam o sintoma; ambiguidades continuam limitadas por revisão humana.
+    affirmed = re.sub(r"\b(?:sem|nega|nao apresenta|nao tem)\s+(?:dor toracica|dor no peito|falta de ar|dispneia|confusao|febre)", "", text)
+    alerts = []
+    if re.search(r"dor (toracica|no peito)", affirmed) and re.search(r"dispneia|falta de ar|sincope|sudorese|confusao", affirmed):
+        alerts.append("dor torácica associada a outro sinal textual")
+    if re.search(r"infecc|febre|sepse", affirmed) and re.search(r"hipotens|confusao|oliguria|falta de ar", affirmed):
+        alerts.append("possível deterioração em contexto infeccioso")
+    blocked = bool(re.search(r"prescrev|receit|\bdose\b|dosagem|suspend|ajust.*medica|confirm.*diagnost|qual (remedio|medicamento)", text))
+    return SafetyAssessment(bool(alerts), tuple(alerts), blocked)
 
-def assess_input(question: str) -> SafetyAssessment:
-    alerts = tuple(label for label, pattern in CRITICAL_PATTERNS.items() if pattern.search(question))
-    return SafetyAssessment(
-        critical=bool(alerts),
-        alerts=alerts,
-        prescription_request=bool(PRESCRIPTION_REQUEST.search(question)),
-    )
-
-
-def validate_output(text: str, has_sources: bool) -> tuple[bool, tuple[str, ...]]:
+def validate_output(text, has_sources, evidence=None):
     reasons = []
+    if not text.strip():
+        reasons.append("saída vazia")
     if UNSAFE_OUTPUT.search(text):
-        reasons.append("saída contém verbo de prescrição ou alteração terapêutica")
+        reasons.append("linguagem de intervenção detectada")
     if not has_sources:
-        reasons.append("nenhuma fonte institucional foi recuperada")
-    if HUMAN_REVIEW_NOTICE not in text:
-        reasons.append("aviso de validação humana ausente")
+        reasons.append("nenhuma fonte recuperada")
+    # Modo conservador: somente trechos literais do contexto podem ser exibidos.
+    if evidence is not None and text.strip() not in evidence:
+        reasons.append("texto gerado não é um trecho literal das evidências")
     return not reasons, tuple(reasons)
 
-
-def safe_fallback(reasons: tuple[str, ...]) -> str:
-    detail = "; ".join(reasons) if reasons else "contexto institucional insuficiente"
-    return (
-        f"Não foi possível produzir uma resposta clínica fundamentada ({detail}). "
-        "A questão deve ser analisada diretamente pela equipe responsável. "
-        f"{HUMAN_REVIEW_NOTICE}"
-    )
+def safe_fallback(reasons):
+    return "Resposta retida para revisão: " + "; ".join(reasons) + ". " + HUMAN_REVIEW_NOTICE

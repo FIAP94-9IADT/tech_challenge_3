@@ -47,4 +47,4 @@ def anonymize_text(text: str) -> AnonymizationResult:
 
 def contains_direct_identifier(text: str) -> bool:
     """Retorna verdadeiro quando um padrão identificador ainda é detectado."""
-    return any(pattern.search(text) for _, pattern, _ in PATTERNS[:4])
+    return any(pattern.search(text) for _, pattern, _ in PATTERNS)

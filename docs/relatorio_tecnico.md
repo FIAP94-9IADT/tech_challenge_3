@@ -1,164 +1,144 @@
-# Assistente clínico institucional com modelo de linguagem customizado
+# Assistente clínico institucional: ajuste fino e orquestração com revisão profissional
 
 ## Resumo
 
-Este projeto apresenta um protótipo de apoio à consulta de protocolos internos e à organização de informações clínicas. A solução utiliza dados sintéticos, ajuste fino eficiente de um modelo de linguagem, recuperação de informações, consultas estruturadas e orquestração por grafo. A arquitetura prioriza rastreabilidade, modularidade e revisão humana, pois respostas linguisticamente plausíveis não garantem correção clínica. O sistema não diagnostica, não prescreve e não executa alterações terapêuticas.
+Foi desenvolvido um protótipo com dados sintéticos para estudar adaptação de um modelo de linguagem, consulta estruturada, recuperação documental e orquestração por grafo. O experimento executou LoRA em FLAN-T5-small e comparou o modelo base com o adaptador. A perda de teste diminuiu, mas as respostas permaneceram insuficientes para apoio clínico. O fluxo implementa retenção conservadora de saídas e priorização de alertas antes da geração. Os resultados distinguem aprendizado estatístico, funcionamento do software e validade clínica.
 
-## 1. Contexto e objetivos
+## 1. Objetivo e fundamentação
 
-Protocolos, perguntas frequentes, modelos de registros e dados de prontuário possuem estruturas distintas e são atualizados em ritmos diferentes. Incorporar todo esse conteúdo apenas aos pesos de um modelo dificultaria a atualização e a indicação de fontes. Por outro lado, usar somente uma busca documental não adapta o formato e os limites das respostas ao contexto institucional.
+O objetivo é organizar informações de prontuário e protocolos para revisão por um profissional. O sistema não altera registros nem executa condutas.
 
-A solução combina duas funções complementares:
+O projeto combina duas formas de uso dos documentos. No ajuste fino, exemplos de instrução, contexto e resposta orientam a atualização de um adaptador LoRA, enquanto os pesos originais do modelo permanecem congelados. Na inferência, a recuperação seleciona trechos de protocolos e os inclui no contexto da pergunta. Treinar o adaptador e recuperar documentos são processos distintos: o primeiro modifica parâmetros; o segundo fornece informações para uma execução específica.
 
-1. o ajuste fino ensina padrão de resposta, vocabulário, recusas e limites de atuação;
-2. a recuperação fornece protocolos e dados atualizados no momento da consulta.
+O FLAN-T5-small transforma uma sequência de entrada em uma sequência de resposta. O LangChain encadeia a montagem do prompt e a chamada do modelo. O LangGraph coordena as etapas e suas decisões por meio de um estado compartilhado, permitindo encerrar o processamento antes da geração quando há alerta, recusa ou ausência de contexto.
 
-Os objetivos específicos são preparar dados anonimizados, ajustar um modelo fundacional por LoRA, consultar registros estruturados, recuperar fontes institucionais, coordenar decisões por LangGraph e avaliar qualidade, segurança e rastreabilidade.
+A recuperação lexical foi escolhida para a coleção de quatro protocolos por permitir inspecionar a contribuição dos termos e executar a busca localmente com baixo custo computacional. Ela não usa embeddings semânticos: depende da sobreposição de palavras entre pergunta e documentos, o que limita o tratamento de sinônimos. As seções seguintes detalham a preparação dos dados, o treinamento, a recuperação e os controles de saída.
 
-## 2. Dados
+## 2. Dados e curadoria
 
-### 2.1 Composição
+O corpus contém 25 exemplos sintéticos em cinco categorias: FAQ, protocolos, registros, procedimentos e segurança. Há quatro protocolos sintéticos, três pacientes e sete exames. Um exemplo de reconciliação e receita contém campos de preenchimento exclusivo do profissional. Não há doses ou medicamentos propostos pelo assistente nesse modelo.
 
-O corpus incluído no repositório é inteiramente sintético e contém exemplos de perguntas frequentes, resumos de protocolo, modelos de registro, procedimentos, reconciliação/prescrição para preenchimento exclusivo do profissional e situações de segurança. Os protocolos abordam dor torácica, possível deterioração infecciosa, acompanhamento de diabetes e acompanhamento de hipertensão. A base SQLite contém três pacientes fictícios e sete exames.
+As fontes REGRA e MODELO identificam exemplos de treinamento; os documentos PROTO constituem a coleção recuperável. Não se deve interpretar uma etiqueta de origem como comprovação de referência clínica publicada. Os protocolos são fictícios e não passaram por validação médica.
 
-Os exemplos seguem os campos `id`, `category`, `instruction`, `input`, `output` e `source`. O campo `source` preserva a origem institucional que fundamenta a resposta esperada.
+A preparação verifica campos, identificadores únicos, entradas duplicadas e comprimento mínimo da resposta. Expressões regulares removem padrões conhecidos de identificação. O detector usa os mesmos tipos de padrões, incluindo nomes rotulados; portanto, sua avaliação não é independente e não comprova anonimização irreversível. Nomes sem rótulos e combinações indiretas podem permanecer. A ausência de dados reais é uma condição do experimento.
 
-### 2.2 Pré-processamento e anonimização
+### 2.1 Partições
 
-O script `scripts/prepare_data.py` realiza as seguintes etapas:
+Foram definidos 15 exemplos de treino, cinco de validação e cinco de teste, com identificadores disjuntos. Todas as categorias aparecem nas três partições. REC-007, que contém o modelo de receita, integra o conjunto de treino.
 
-- leitura e validação estrutural do JSONL;
-- remoção determinística de CPF, e-mail, telefone, número de prontuário e nomes associados a rótulos;
-- verificação de identificadores remanescentes;
-- normalização de espaços;
-- formatação instrucional para modelo causal;
-- separação estratificada, com uma observação de cada categoria reservada para teste;
-- geração de relatório de curadoria.
+A divisão fixa facilita reprodução, mas não é amostragem aleatória nem teste de protocolos inéditos. Os conjuntos compartilham o domínio institucional. Com somente cinco exemplos de teste, os indicadores são descritivos e não sustentam inferência estatística sobre desempenho assistencial.
 
-A divisão por categoria reduz o risco de uma avaliação concentrada em um único tipo de texto. Como o conjunto é pequeno e sintético, as métricas não representam desempenho clínico real; servem para verificar a implementação e comparar versões sob condições controladas.
+O treino atualiza pesos; a validação seleciona a época; o teste compara os resultados após a seleção. Respostas do modelo base são registradas para comparação, sem orientar a escolha de hiperparâmetros. Os hashes dos arquivos identificam a versão exata usada.
 
-## 3. Ajuste fino
+## 3. Treinamento
 
-### 3.1 Modelo e técnica
+### 3.1 Escolha do modelo
 
-O notebook `02_fine_tuning_lora.ipynb` utiliza o LLaMA 2 de 7 bilhões de parâmetros como modelo fundacional causal. A escolha mantém correspondência com a arquitetura estudada e permite adaptar um modelo genérico a uma tarefa institucional.
+O ambiente inspecionado possui aproximadamente 6 GB de RAM e vídeo integrado AMD, sem CUDA. O perfil local usa FLAN-T5-small, da família T5, com adaptação LoRA. O modelo é pequeno e não foi escolhido como solução clínica de qualidade comprovada. O objetivo é executar e avaliar o processo nas condições disponíveis.
 
-O carregamento usa quantização em 4 bits. Os pesos do modelo base permanecem congelados e adaptadores LoRA são inseridos nas projeções de atenção. Essa combinação, conhecida como QLoRA, reduz o consumo de memória e mantém o treinamento concentrado em uma fração dos parâmetros. O adaptador é salvo separadamente do modelo base.
+O treinamento usa CPU em precisão float32, sem quantização. O uso do modelo base permanece sujeito à sua licença; o treinamento do adaptador não altera essas condições. Os pesos do adaptador são locais e não estão incluídos no Git.
 
-### 3.2 Configuração
+### 3.2 Processo
 
-Os principais hiperparâmetros foram definidos de forma conservadora para um conjunto pequeno:
+T5 recebe a entrada pelo codificador e prevê a resposta no decodificador. A função `format_prompt` é compartilhada por treino e inferência. A tokenização converte o texto em identificadores numéricos reconhecidos pelo modelo. Durante o treinamento, a perda de entropia cruzada penaliza previsões que atribuem baixa probabilidade aos tokens da resposta esperada. O programa verifica os comprimentos antes de treinar, evitando truncamento silencioso.
 
-| Parâmetro | Valor inicial | Justificativa |
-|---|---:|---|
-| Épocas | 3 | permite exposição repetida sem prolongar excessivamente o ajuste |
-| Taxa de aprendizado | 2e-4 | valor inicial usual para adaptadores, sujeito à curva de validação |
-| `r` LoRA | 16 | capacidade moderada dos adaptadores |
-| `lora_alpha` | 32 | escala proporcional ao posto escolhido |
-| `lora_dropout` | 0,05 | regularização leve |
-| Comprimento máximo | 512 tokens | suficiente para os exemplos curtos |
-| Acumulação de gradiente | 4 | amplia o lote efetivo com menor memória |
+LoRA mantém a matriz original congelada e aprende uma atualização de baixo posto, W' = W + (alpha/r) BA. Nessa expressão, W representa os pesos originais, A e B são as matrizes treináveis, r determina o posto da atualização e alpha controla sua escala. Essa decomposição reduz o número de parâmetros ajustados. Usam-se as projeções de consulta (q) e valor (v) dos mecanismos de atenção, posto 8, alpha 16 e dropout 0,05. O dropout desativa aleatoriamente parte das ativações durante o treinamento como forma de regularização. O experimento atualizou 344.064 parâmetros entre 77.305.216 parâmetros totais, cerca de 0,45%.
 
-O treinamento registra perda de treino e validação. Uma elevação persistente da perda de validação acompanhada de queda da perda de treino é tratada como indício de sobreajuste. O adaptador só deve ser promovido após os testes de segurança e a revisão qualitativa dos erros.
+| Parâmetro | Configuração local |
+|---|---|
+| Precisão | float32, sem quantização |
+| Épocas | 6 |
+| Taxa de aprendizado | 0,0002 |
+| Otimizador | AdamW |
+| Lote e acumulação | um exemplo; até quatro gradientes |
+| Norma máxima do gradiente | 1 |
+| Semente | 42 |
+| Seleção | menor perda de validação |
+| Limites verificados | 512 tokens de entrada; 256 de alvo |
+| Geração | determinística, até 160 tokens novos |
 
-### 3.3 Reprodutibilidade e limitação computacional
+Os valores foram definidos antes da avaliação final, sem busca exaustiva. A acumulação reduz memória; o último grupo usa seu tamanho real. O adaptador com menor perda de validação é salvo e recarregado antes da comparação final.
 
-O caderno fixa a semente e separa a execução pesada por meio da variável `RUN_TRAINING`. A etapa requer GPU compatível, acesso autorizado ao modelo base e aceitação de sua licença. A execução local padrão valida preparação, configuração e integração sem afirmar que houve treinamento quando não há esse recurso.
+### 3.3 Resultados da LLM
 
-## 4. Arquitetura do assistente
+A perda média de validação caiu de 3,4425 na primeira época para 3,2361 na sexta. A sexta época foi selecionada.
 
-### 4.1 Pipeline LangChain
+| Indicador no teste, n=5 | Modelo base | Adaptador |
+|---|---:|---:|
+| Perda média por exemplo | 3,3887 | 3,1454 |
+| Recall lexical médio | 0,0133 | 0,0239 |
 
-O pipeline usa um `PromptTemplate` com limites explícitos e o compõe com um gerador pela interface de `Runnable`. Em produção experimental, o gerador é um `HuggingFacePipeline` formado pelo LLaMA base e pelo adaptador LoRA. Para testes locais, um gerador determinístico permite exercitar as demais camadas sem GPU e sem chamada externa.
+![Perdas por época](results/loss.png)
 
-Antes da geração, o pipeline recebe:
+A perda é a média das perdas por exemplo, não uma média ponderada pelo total de tokens. A perda de treino inclui dropout e pesos em atualização; a validação usa modo de avaliação.
 
-- pergunta anonimizada;
-- resumo do prontuário consultado por identificador institucional;
-- exames pendentes e resultados recentes;
-- trechos dos protocolos recuperados.
+A queda da perda indica melhor ajuste aos alvos sob essa métrica. Entretanto, a qualidade gerativa continua baixa. Em PRO-004, o modelo repete a instrução em vez de explicar os limites. Em FAQ-006, reproduz partes do prompt. Em SEC-004, a saída adaptada apresenta repetição prolongada e mistura de idiomas. Não há evidência de utilidade clínica.
 
-A consulta estruturada é parametrizada e limitada a operações `SELECT` previamente definidas. O modelo não produz nem executa SQL. Essa decisão reduz o risco de exposição indevida e de alteração da base.
+As respostas completas, versões, revisão do modelo, comprimentos, hashes e histórico estão em [training.json](results/training.json). O recall lexical é a fração de termos únicos da referência presentes na resposta; não mede equivalência semântica, factualidade ou correção médica.
 
-### 4.2 Recuperação de protocolos
+## 4. Integração e recuperação
 
-Os documentos Markdown são indexados localmente por TF-IDF. A similaridade cosseno ordena os protocolos e o trecho com maior interseção lexical é fornecido ao modelo. Cada resultado preserva código, título, caminho e pontuação. Essa implementação é pequena e transparente, adequada ao corpus demonstrativo; um volume institucional maior exigiria avaliação específica de chunking, embeddings e banco vetorial.
+A consulta SQLite usa identificador validado e comandos SELECT parametrizados em modo somente leitura. Retorna condições, alergias, exames pendentes e resultados. A leitura é feita a cada execução; os dados de demonstração continuam estáticos e fictícios.
 
-### 4.3 Fluxo LangGraph
+A recuperação usa TF-IDF: cada termo recebe um peso correspondente à sua frequência relativa no texto multiplicada pelo IDF suavizado, log((1+N)/(1+df))+1. N é o número de documentos e df é o número de documentos que contêm o termo. Termos presentes em menos documentos recebem maior peso relativo. A similaridade cosseno compara a direção dos vetores de pesos da pergunta e de cada documento, ordenando os resultados pela proximidade lexical. Somente a pergunta participa da consulta: comorbidades não devem produzir evidências artificiais para assuntos ausentes do corpus.
 
-O estado compartilhado é descrito por `TypedDict`. Cada nó recebe o estado e retorna apenas suas atualizações. A rota após a validação decide entre finalizar a resposta e substituí-la por uma mensagem segura.
+Selecionam-se até dois documentos com pontuação mínima de 0,08. Esse valor é uma configuração inicial, não confiança estatística. A seção com mais termos em comum é limitada a 700 caracteres. Isso pode perder conteúdo relevante e não resolve sinonímia. Código, título, versão e caminho relativo à raiz do projeto acompanham a fonte; a pontuação não demonstra suporte factual.
+
+A chain usa Runnable para compor o prompt e invocar o adaptador real. O gerador determinístico é restrito aos testes de software. O contexto tem limite explícito de tokens na inferência.
+
+### 4.1 Contratos entre componentes
+
+| Componente | Entrada | Resultado |
+|---|---|---|
+| Triagem | pergunta tratada | alerta, recusa ou continuação |
+| SQLite | identificador sintético validado | dados atuais da base local |
+| Recuperação | pergunta | até dois protocolos e metadados |
+| LangChain | pergunta e evidências | prompt compartilhado com o treinamento |
+| Modelo | prompt | rascunho experimental |
+| Verificador | rascunho e contexto | trecho literal ou retenção |
+| Auditoria | estado, inclusive falhas | metadados sem texto clínico livre |
+
+O estado acumula as etapas concluídas. `TypedDict` descreve sua estrutura; as funções verificam o conteúdo. A configuração `demo` usa um gerador determinístico para testes; `t5` carrega o modelo base e o adaptador treinado.
+
+## 5. Grafo e segurança
 
 ```mermaid
 flowchart TD
-    A([Início]) --> B[Anonimizar entrada]
-    B --> C[Consultar prontuário SQLite]
-    C --> D[Detectar limites e sinais de alerta]
-    D --> E[Recuperar protocolos]
-    E --> F[Gerar resposta com LangChain]
-    F --> G[Validar saída]
-    G -->|válida| H[Montar resposta e fontes]
-    G -->|inválida| I[Aplicar resposta segura]
-    H --> J[Registrar auditoria]
-    I --> J
-    J --> K([Fim])
+    A[Entrada e triagem textual] --> B{Sinal crítico?}
+    B -->|sim| C[Alerta local e fim]
+    B -->|não| D{Pedido fora do escopo?}
+    D -->|sim| E[Recusa e fim]
+    D -->|não| F[Consulta SQLite e recuperação]
+    F --> G{Paciente e fontes presentes?}
+    G -->|não| H[Retenção da resposta]
+    G -->|sim| I[LLM ajustada]
+    I --> J{Trecho literal sem padrão de intervenção?}
+    J -->|sim| K[Trecho e fontes para revisão]
+    J -->|não| H
 ```
 
-O alerta crítico não representa diagnóstico. Ele explicita os sinais textuais encontrados e orienta a priorização da avaliação presencial, sem esperar uma decisão do modelo.
+A triagem é anterior à geração. Alertas e recusas não dependem da obediência da LLM. A detecção trata ordem dos sintomas e algumas negações locais; não interpreta toda a linguagem clínica. O sistema não envia notificações externas.
 
-## 5. Segurança, privacidade e explicabilidade
+O rascunho só é disponibilizado se corresponder literalmente ao contexto e não contiver padrões de intervenção. A medida reduz o espaço de saídas admitidas, mas pode bloquear paráfrases adequadas. Também não prova que um trecho literal seja apropriado ao caso. Toda saída informa que nenhuma conduta foi autorizada. Não existe uma etapa de aprovação médica eletrônica.
 
-A proteção é aplicada em camadas:
+A ausência de paciente ou fontes interrompe a geração. Falhas operacionais são propagadas e registradas. A rota de alerta encerra o fluxo antes das verificações de geração, preservando a mensagem de triagem.
 
-- dados de demonstração sintéticos;
-- anonimização antes do prompt;
-- identificadores institucionais validados por expressão regular;
-- banco aberto em modo somente leitura e consultas parametrizadas;
-- recusa explícita de prescrição, dose, suspensão e ajuste de medicamento;
-- detecção de combinações textuais associadas a necessidade de avaliação imediata;
-- exigência de fonte institucional e aviso de validação humana;
-- fallback quando a saída contém linguagem terapêutica direta ou não possui fonte;
-- log com hash da pergunta, rota, fontes, alertas e etapas, sem o texto original.
+## 6. Auditoria e testes
 
-A explicabilidade operacional é fornecida pelas fontes recuperadas, exames listados, alertas ativados e histórico de nós. Ela não deve ser confundida com explicação completa dos parâmetros internos do modelo.
+Cada execução registra identificador único, backend, duração, etapas, rota, fontes com versão e tipo de erro. Texto livre de pergunta, rascunho e resposta não é persistido no log. Hashes de valores previsíveis não são proteção irreversível; o armazenamento é apenas local e experimental.
 
-## 6. Avaliação
+A suíte contém 19 testes, incluindo integridade das partições, cobertura do modelo de receita, leitura parametrizada, falta de paciente, triagem antes da LLM, falta de contexto e auditoria de falhas. Os testes usam bases temporárias e não recriam a base da aplicação.
 
-### 6.1 Dimensões
+A avaliação integrada com T5 inclui cinco casos. O pedido clínico normal foi retido pela verificação literal; os demais exercitam alerta, recusa, assunto sem cobertura e paciente ausente. As rotas e respostas estão em [system.json](results/system.json). O funcionamento desses controles não transforma o resultado gerativo negativo em sucesso clínico.
 
-A avaliação combina:
+Os notebooks foram organizados para mostrar código, resultado e interpretação. O segundo lê evidência salva por padrão; a repetição do treinamento é explícita. Os comandos completos estão no README.
 
-- **perda de treino e validação:** acompanha o ajuste do modelo;
-- **recall lexical:** mede a presença de termos da resposta de referência;
-- **taxa de citação:** verifica se há fonte recuperada;
-- **taxa de segurança:** exige ausência de verbos terapêuticos diretos e presença do aviso de revisão humana;
-- **recuperação top-1:** verifica se o protocolo esperado ocupa a primeira posição;
-- **testes adversariais:** incluem pedido de prescrição, tentativa de ignorar regras e entrada com identificadores.
+## 7. Limitações
 
-O recall lexical é uma aproximação simples. Uma resposta pode usar sinônimos e receber pontuação menor, ou repetir palavras sem estar clinicamente correta. Por isso, a análise qualitativa e a validação especializada permanecem necessárias.
+Amostra pequena, corpus sintético, ausência de avaliação por especialistas, baixa qualidade em português, regras textuais incompletas e recuperação lexical restringem o alcance das conclusões. A correspondência literal é uma política de retenção, não explicabilidade causal da LLM.
 
-### 6.2 Resultados reproduzíveis
-
-Os resultados locais são produzidos por `pytest -q` e pelo notebook `05_avaliacao.ipynb`. Eles validam as camadas determinísticas e o grafo com o backend de demonstração. As métricas do modelo ajustado devem ser inseridas após a execução em GPU, acompanhadas do identificador do modelo base, hiperparâmetros, semente e versão do dataset.
-
-Na execução local de 27 de julho de 2026, os onze testes automatizados foram aprovados. As quatro consultas controladas de recuperação localizaram o protocolo esperado na primeira posição, resultando em acurácia top-1 de 1,00. Nos três casos integrados do caderno de avaliação, a taxa de citação foi 1,00, a taxa de segurança foi 1,00 e o recall lexical médio foi 0,5833. O valor moderado de recall decorre, em parte, da formulação determinística não copiar integralmente os termos das referências; ele deve ser interpretado em conjunto com os casos individuais.
-
-| Item | Critério de aceitação |
-|---|---|
-| Anonimização | nenhum identificador direto detectado após o processamento |
-| Consulta estruturada | somente o paciente solicitado e rejeição de identificador inválido |
-| Recuperação | protocolo de dor torácica em top-1 no caso controlado |
-| Segurança | recusa de prescrição e bloqueio de saída terapêutica direta |
-| Rastreabilidade | fonte e histórico de etapas presentes |
-| Auditoria | hash presente e pergunta em texto aberto ausente |
-
-Esses resultados não incluem perda ou qualidade gerativa do LLaMA ajustado, pois o treinamento requer GPU e credenciais do modelo base. Manter essa distinção evita atribuir ao adaptador um desempenho ainda não medido.
-
-## 7. Limitações e trabalho futuro
-
-O corpus é reduzido, sintético e não cobre diversidade populacional, variações linguísticas, especialidades ou ambiguidades de registros reais. As regras de alerta são demonstrações textuais, não escalas clínicas validadas. O índice TF-IDF privilegia coincidência de termos. Também não houve validação prospectiva, avaliação por especialistas nem estudo de impacto assistencial.
-
-Antes de qualquer uso fora de laboratório, seriam necessários governança de dados, aprovação ética e institucional, controle de acesso, criptografia, versionamento dos protocolos, validação clínica formal, monitoramento de viés e um processo claro de suspensão do sistema diante de falhas.
+A reprodutibilidade depende de bibliotecas, modelo e dados. Versões e revisão do modelo estão registradas, mas execução em outro hardware pode produzir pequenas diferenças. Não houve avaliação prospectiva, integração hospitalar ou comparação estatística abrangente.
 
 ## 8. Conclusão
 
-A separação entre adaptação do modelo, recuperação de conhecimento e regras determinísticas torna o protótipo mais verificável. O modelo organiza a linguagem; o banco fornece fatos estruturados; o recuperador fornece fontes; o grafo controla a ordem e as decisões; e a camada de segurança pode interromper uma saída inadequada. Essa divisão não elimina os riscos de modelos de linguagem, mas torna seus limites e evidências mais visíveis para revisão humana.
+Foi realizado um ajuste LoRA reproduzível e demonstrada a integração com consulta estruturada, recuperação e grafo. O resultado principal combina viabilidade técnica com desempenho gerativo insuficiente. A avaliação expõe essa limitação e justifica a retenção de saídas, preservando a distinção entre um experimento acadêmico executado e um assistente apto ao uso clínico.

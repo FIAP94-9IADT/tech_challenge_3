@@ -1,104 +1,66 @@
-"""Prepara os exemplos sintéticos para fine-tuning supervisionado."""
-
-from __future__ import annotations
-
+"""Curadoria do corpus sintético e partições fixas independentes."""
+import hashlib
 import json
 import sys
 from collections import Counter
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+from clinical_assistant.anonymization import anonymize_text, contains_direct_identifier
+from clinical_assistant.prompting import format_prompt
 
-from clinical_assistant.anonymization import anonymize_text, contains_direct_identifier  # noqa: E402
+VALIDATION = {"FAQ-004", "PRO-002", "LAU-002", "REC-004", "SEC-002"}
+TEST = {"FAQ-006", "PRO-004", "LAU-004", "REC-005", "SEC-004"}
 
-
-RAW_PATH = ROOT / "data" / "raw" / "internal_examples.jsonl"
-OUTPUT_DIR = ROOT / "data" / "processed"
-
-
-def read_jsonl(path: Path) -> list[dict[str, str]]:
-    with path.open(encoding="utf-8") as stream:
-        return [json.loads(line) for line in stream if line.strip()]
-
-
-def format_example(record: dict[str, str]) -> dict[str, str]:
-    instruction = anonymize_text(record["instruction"]).text
-    input_text = anonymize_text(record["input"]).text
-    output = anonymize_text(record["output"]).text
-    text = (
-        "<s>[INST] Você é um assistente institucional de apoio clínico. "
-        "Não diagnostique nem prescreva. Use somente o contexto informado e preserve a revisão humana.\n\n"
-        f"Instrução: {instruction}\nContexto: {input_text} [/INST] {output}</s>"
-    )
-    return {
-        "id": record["id"],
-        "category": record["category"],
-        "source": record["source"],
-        "instruction": instruction,
-        "input": input_text,
-        "output": output,
-        "text": text,
+def prepare(output_dir=None):
+    raw_path = ROOT / "data/raw/internal_examples.jsonl"
+    records = [json.loads(line) for line in raw_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    required = {"id", "category", "instruction", "input", "output", "source"}
+    seen, signatures, clean = set(), set(), []
+    for original in records:
+        if not required.issubset(original):
+            raise ValueError("Registro incompleto")
+        if original["id"] in seen:
+            raise ValueError("Identificador duplicado")
+        seen.add(original["id"])
+        row = dict(original)
+        for field in ("instruction", "input", "output"):
+            row[field] = anonymize_text(row[field]).text
+            if contains_direct_identifier(row[field]):
+                raise ValueError("Identificador detectável remanescente")
+        signature = (row["instruction"].casefold(), row["input"].casefold())
+        if signature in signatures:
+            raise ValueError("Entrada duplicada")
+        signatures.add(signature)
+        if len(row["output"].split()) < 12:
+            raise ValueError("Resposta insuficiente")
+        row["prompt"] = format_prompt(row["instruction"], row["input"])
+        row["text"] = row["prompt"] + row["output"]
+        clean.append(row)
+    if not (VALIDATION | TEST).issubset(seen) or VALIDATION & TEST:
+        raise ValueError("Partições inválidas")
+    splits = {
+        "train": [r for r in clean if r["id"] not in VALIDATION | TEST],
+        "validation": [r for r in clean if r["id"] in VALIDATION],
+        "test": [r for r in clean if r["id"] in TEST],
     }
-
-
-def validate(records: list[dict[str, str]]) -> None:
-    required = {"id", "category", "source", "instruction", "input", "output", "text"}
-    ids = [record["id"] for record in records]
-    if len(ids) != len(set(ids)):
-        raise ValueError("Há identificadores de exemplo duplicados.")
-    for record in records:
-        missing = required - record.keys()
-        if missing:
-            raise ValueError(f"Campos ausentes em {record.get('id')}: {sorted(missing)}")
-        if any(contains_direct_identifier(record[field]) for field in ("instruction", "input", "output")):
-            raise ValueError(f"Identificador direto remanescente em {record['id']}")
-        if len(record["output"].split()) < 12:
-            raise ValueError(f"Resposta curta demais em {record['id']}")
-
-
-def stratified_split(records: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    grouped: dict[str, list[dict[str, str]]] = {}
-    for record in records:
-        grouped.setdefault(record["category"], []).append(record)
-    train, test = [], []
-    for category in sorted(grouped):
-        ordered = sorted(grouped[category], key=lambda item: item["id"])
-        test.append(ordered[-1])
-        train.extend(ordered[:-1])
-    return train, test
-
-
-def write_jsonl(path: Path, records: list[dict[str, str]]) -> None:
-    with path.open("w", encoding="utf-8") as stream:
-        for record in records:
-            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-
-def main() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    raw = read_jsonl(RAW_PATH)
-    processed = [format_example(record) for record in raw]
-    validate(processed)
-    train, test = stratified_split(processed)
-    write_jsonl(OUTPUT_DIR / "train.jsonl", train)
-    write_jsonl(OUTPUT_DIR / "test.jsonl", test)
+    assert any(r["source"] == "MODELO-PRESCRICAO" for r in splits["train"])
+    output_dir = Path(output_dir or ROOT / "data/processed")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name, rows in splits.items():
+        (output_dir / f"{name}.jsonl").write_text(
+            "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     report = {
-        "synthetic_data": True,
-        "total_examples": len(processed),
-        "train_examples": len(train),
-        "test_examples": len(test),
-        "categories": dict(sorted(Counter(item["category"] for item in processed).items())),
-        "sources": sorted({item["source"] for item in processed}),
-        "direct_identifiers_detected_after_processing": 0,
-        "split_strategy": "um exemplo por categoria no teste; demais exemplos no treino",
+        "synthetic_data": True, "total_examples": len(clean),
+        "raw_sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+        "partitions": {name: {"count": len(rows), "ids": [r["id"] for r in rows],
+            "categories": dict(Counter(r["category"] for r in rows))} for name, rows in splits.items()},
+        "detected_identifiers_after_processing": 0,
+        "limitation": "Regex não comprova anonimização irreversível. Partições compartilham domínio e protocolos; medem tarefas novas no domínio conhecido.",
     }
-    (OUTPUT_DIR / "curation_report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    print(json.dumps(report, ensure_ascii=False, indent=2))
-
+    (output_dir / "curation_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
 
 if __name__ == "__main__":
-    main()
+    print(json.dumps(prepare(), ensure_ascii=False, indent=2))

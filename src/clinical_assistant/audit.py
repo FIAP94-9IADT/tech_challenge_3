@@ -1,34 +1,22 @@
-"""Auditoria JSONL sem persistência do texto clínico original."""
-
-from __future__ import annotations
-
+"""Registro local de metadados, inclusive falhas, sem texto livre."""
 import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-
 
 class AuditLogger:
-    def __init__(self, path: str | Path):
+    def __init__(self, path):
         self.path = Path(path)
 
-    def write(self, state: dict[str, Any]) -> dict[str, Any]:
+    def write(self, state):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        question = str(state.get("question", ""))
-        record = {
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            "request_hash": hashlib.sha256(question.encode("utf-8")).hexdigest(),
-            "patient_id": state.get("patient_id"),
-            "redaction_count": sum(state.get("redactions", {}).values()),
-            "critical": bool(state.get("critical")),
-            "alerts": state.get("alerts", []),
-            "sources": [item.get("source_id") for item in state.get("sources", [])],
-            "route": state.get("route"),
-            "output_valid": bool(state.get("output_valid")),
-            "validation_reasons": state.get("validation_reasons", []),
-            "steps": state.get("steps", []),
-        }
+        record = {k: state.get(k) for k in ("request_id", "backend", "route", "output_valid",
+                  "elapsed_seconds", "error_type", "steps", "critical", "alerts", "validation_reasons")}
+        record.update(timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            request_hash=hashlib.sha256(str(state.get("question", "")).encode()).hexdigest(),
+            patient_ref_hash=hashlib.sha256(str(state.get("patient_id", "")).encode()).hexdigest(),
+            redaction_count=sum(state.get("redactions", {}).values()),
+            sources=[{"id": s["source_id"], "version": s.get("version")} for s in state.get("sources", [])])
         with self.path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")
         return record

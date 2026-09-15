@@ -31,6 +31,7 @@ class RetrievedProtocol:
     excerpt: str
     score: float
     path: str
+    version: str = "1.0"
 
 
 class ProtocolRetriever:
@@ -47,7 +48,13 @@ class ProtocolRetriever:
             text = path.read_text(encoding="utf-8")
             first_line = next((line for line in text.splitlines() if line.startswith("# ")), path.stem)
             title = first_line.removeprefix("# ").strip()
-            documents.append({"source_id": path.stem, "title": title, "text": text, "path": str(path)})
+            version = re.search(r"Versão sintética:\*\*\s*([\d.]+)", text)
+            project_root = Path(__file__).resolve().parents[2]
+            resolved = path.resolve()
+            # Metadados portáveis, sem expor diretórios pessoais da máquina.
+            source_path = resolved.relative_to(project_root).as_posix() if resolved.is_relative_to(project_root) else path.name
+            documents.append({"source_id": path.stem, "title": title, "text": text, "path": source_path,
+                              "version": version.group(1) if version else "não informada"})
         if not documents:
             raise FileNotFoundError(f"Nenhum protocolo .md encontrado em {self.protocols_path}")
         return tuple(documents)
@@ -95,6 +102,7 @@ class ProtocolRetriever:
                         excerpt=self._best_excerpt(str(document["text"]), query_tokens),
                         score=round(score, 4),
                         path=str(document["path"]),
+                        version=str(document["version"]),
                     )
                 )
         return tuple(sorted(ranked, key=lambda item: item.score, reverse=True)[:k])

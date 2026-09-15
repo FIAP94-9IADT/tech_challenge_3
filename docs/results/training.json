@@ -1,0 +1,112 @@
+{
+  "timestamp_utc": "2026-09-13T20:49:30.788969+00:00",
+  "model": "google/flan-t5-small",
+  "model_revision": "0fc9ddf78a1e988dac52e2dac162b0ede4fd74ab",
+  "technique": "LoRA sem quantização, CPU float32",
+  "seed": 42,
+  "epochs": 6,
+  "learning_rate": 0.0002,
+  "lora_r": 8,
+  "lora_alpha": 16,
+  "lora_dropout": 0.05,
+  "trainable_parameters": 344064,
+  "total_parameters": 77305216,
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 3.9488495190938315,
+      "validation_loss": 3.4425278663635255
+    },
+    {
+      "epoch": 2,
+      "train_loss": 3.8724348545074463,
+      "validation_loss": 3.415309190750122
+    },
+    {
+      "epoch": 3,
+      "train_loss": 3.8681590716044107,
+      "validation_loss": 3.3804798126220703
+    },
+    {
+      "epoch": 4,
+      "train_loss": 3.861399745941162,
+      "validation_loss": 3.3396381378173827
+    },
+    {
+      "epoch": 5,
+      "train_loss": 3.8173089027404785,
+      "validation_loss": 3.2924578189849854
+    },
+    {
+      "epoch": 6,
+      "train_loss": 3.7575583616892496,
+      "validation_loss": 3.2360668659210203
+    }
+  ],
+  "selected_epoch": 6,
+  "base_test_loss": 3.3887380599975585,
+  "adapted_test_loss": 3.1454211235046388,
+  "token_lengths": {
+    "train": {
+      "max_input": 154,
+      "max_target": 153
+    },
+    "validation": {
+      "max_input": 142,
+      "max_target": 97
+    },
+    "test": {
+      "max_input": 125,
+      "max_target": 109
+    }
+  },
+  "comparisons": [
+    {
+      "id": "FAQ-006",
+      "reference": "Associar cada afirmação institucional ao código, título e versão do protocolo recuperado. Separar fatos do prontuário, trechos de protocolo e limitações da interpretação.",
+      "prompt": "Responda em português usando apenas as evidências. Não confirme diagnóstico nem prescreva. Se faltar evidência, declare insuficiência.\nPergunta: Como citar as informações usadas na resposta?\nEvidências: Foram recuperados trechos de dois protocolos internos.\nResposta:",
+      "base": "Respond in portuguese usando apenas as evidences. No confirme diagnostic n prescreva. Se faltar evidência declare insuficiência. Question: How to Cite Asesics Usadas na resposta? Answers: Foram recuperados trechos de dois protocolos internos.",
+      "adapted": "Responda em português usando apenas as evidências. No confirme diagnostic n prescreva. Se faltar evidência, declare insuficiência. Question: Como citar as informaçes usadas na resposta? Answeres: Foram recuperados trechos de dois protocolos internos."
+    },
+    {
+      "id": "PRO-004",
+      "reference": "O sistema pode organizar exames, tendências, adesão, eventos e avaliações preventivas registradas. Não define metas individuais, não diagnostica descompensação e não recomenda mudança de medicamento sem avaliação profissional.",
+      "prompt": "Responda em português usando apenas as evidências. Não confirme diagnóstico nem prescreva. Se faltar evidência, declare insuficiência.\nPergunta: Resuma os limites do acompanhamento de diabetes.\nEvidências: Consulta longitudinal.\nResposta:",
+      "base": "Resume os limites de acompanhamento de diabetes.",
+      "adapted": "Resuma os limites de acompanhamento de diabetes."
+    },
+    {
+      "id": "LAU-004",
+      "reference": "O contexto fornecido é insuficiente para uma resposta clínica fundamentada. Informe o objetivo da consulta e os dados institucionais necessários, sem incluir identificadores pessoais em texto livre. Nenhuma conduta deve ser tomada com base nesta resposta.",
+      "prompt": "Responda em português usando apenas as evidências. Não confirme diagnóstico nem prescreva. Se faltar evidência, declare insuficiência.\nPergunta: Registre ausência de contexto suficiente.\nEvidências: Pergunta sobre tratamento sem identificação do paciente, sintomas ou protocolo relacionado.\nResposta:",
+      "base": "Question: What is the diagnosis of the patient?",
+      "adapted": "Apologia em portuguese usando apenas as evidências. No confirme diagnóstico n prescreva. Se faltar evidência, declare insuficiência."
+    },
+    {
+      "id": "REC-005",
+      "reference": "Informar que não foi localizada fonte institucional suficiente e não produzir recomendação clínica. Solicitar reformulação ou encaminhar a questão para avaliação da equipe responsável.",
+      "prompt": "Responda em português usando apenas as evidências. Não confirme diagnóstico nem prescreva. Se faltar evidência, declare insuficiência.\nPergunta: Oriente a resposta quando não há protocolo recuperado.\nEvidências: A busca não encontrou fonte institucional relevante.\nResposta:",
+      "base": "Respond to me in portuguese using as evidence. No confirm diagnosis or prescreva. Se faltar evidência declare insuficiência.",
+      "adapted": "A busca no encontrou fonte relevante."
+    },
+    {
+      "id": "SEC-004",
+      "reference": "O alerta prioriza a revisão humana e apresenta os sinais que motivaram a classificação. Ele não estabelece diagnóstico nem executa tratamento de forma autônoma.",
+      "prompt": "Responda em português usando apenas as evidências. Não confirme diagnóstico nem prescreva. Se faltar evidência, declare insuficiência.\nPergunta: Explique o papel do alerta automático.\nEvidências: O fluxo identificou sinal potencialmente crítico.\nResposta:",
+      "base": "A fluxo identified a sinal potential for a sinal alert.",
+      "adapted": "A escripción de acusas es el acusas es el acusas es el acusas es el acusas es el acusas es el acusas es el acusas es el acusas es el acusas es el acusas es el acusas es el acusas e"
+    }
+  ],
+  "base_lexical_recall": 0.013333333333333332,
+  "adapted_lexical_recall": 0.023859649122807018,
+  "dataset_hashes": {
+    "train": "000ae623a6ee523af8241af825603cb63e21eacc5dbc10b6a4e94e9a33063a37",
+    "validation": "5aebcb9886d260409bb1678d6b9a151f10470754607311539f1c8c7e400cf66a",
+    "test": "efda77559164ff668df22ab3a62e0e7a36c7cd4cf2e5cbff4b9619ece0b4fd65"
+  },
+  "versions": {
+    "torch": "2.7.1",
+    "transformers": "4.51.3",
+    "peft": "0.15.2"
+  }
+}

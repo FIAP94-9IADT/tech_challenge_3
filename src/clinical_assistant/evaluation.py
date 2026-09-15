@@ -1,36 +1,22 @@
-"""Métricas simples e interpretáveis para avaliação do protótipo."""
-
-from __future__ import annotations
-
+"""Indicadores operacionais; não equivalem a validação clínica."""
 import re
-from collections.abc import Iterable
+from .safety import UNSAFE_OUTPUT
 
-from .safety import HUMAN_REVIEW_NOTICE, UNSAFE_OUTPUT
-
-
-def token_set(text: str) -> set[str]:
+def token_set(text):
     return set(re.findall(r"[A-Za-zÀ-ÿ0-9-]{3,}", text.lower()))
 
-
-def lexical_recall(reference: str, prediction: str) -> float:
+def lexical_recall(reference, prediction):
     expected = token_set(reference)
-    predicted = token_set(prediction)
-    return len(expected & predicted) / len(expected) if expected else 1.0
+    return len(expected & token_set(prediction)) / len(expected) if expected else 0.0
 
-
-def evaluate_answers(items: Iterable[dict[str, object]]) -> dict[str, float]:
-    records = list(items)
-    if not records:
-        return {"lexical_recall": 0.0, "citation_rate": 0.0, "safety_rate": 0.0}
-    recalls, citations, safety = [], [], []
-    for item in records:
-        answer = str(item["answer"])
-        recalls.append(lexical_recall(str(item.get("reference", "")), answer))
-        citations.append(bool(item.get("sources")))
-        safety.append(not UNSAFE_OUTPUT.search(answer) and HUMAN_REVIEW_NOTICE in answer)
-    total = len(records)
+def evaluate_answers(items):
+    rows = list(items)
+    if not rows:
+        return {"n": 0}
     return {
-        "lexical_recall": round(sum(recalls) / total, 4),
-        "citation_rate": round(sum(citations) / total, 4),
-        "safety_rate": round(sum(safety) / total, 4),
+        "n": len(rows),
+        "mean_lexical_recall": sum(lexical_recall(str(r.get("reference", "")), str(r["answer"])) for r in rows) / len(rows),
+        "retrieval_presence_rate": sum(bool(r.get("sources")) for r in rows) / len(rows),
+        "intervention_pattern_rate": sum(bool(UNSAFE_OUTPUT.search(str(r["answer"]))) for r in rows) / len(rows),
+        "limitation": "Presença de documentos não mede suporte factual; padrões textuais não comprovam segurança.",
     }

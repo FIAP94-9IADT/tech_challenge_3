@@ -1,111 +1,121 @@
-# Assistente Clínico Institucional
+# Assistente clínico institucional
 
-Protótipo acadêmico de um assistente para apoio à consulta de protocolos internos e à organização de informações clínicas. A aplicação combina ajuste fino eficiente de um modelo de linguagem, recuperação de contexto, consultas estruturadas e um fluxo controlado por grafo.
+Experimento acadêmico com corpus sintético, ajuste fino LoRA, consulta SQLite, recuperação lexical de protocolos, LangChain e LangGraph. O modelo organiza texto para revisão profissional. Não há execução de condutas ou envio externo de alertas.
 
-O sistema trabalha exclusivamente com dados sintéticos. As respostas são apoio informacional: não substituem avaliação profissional, não emitem diagnóstico e não prescrevem. Toda conduta permanece sujeita à validação de um profissional habilitado.
+O treinamento local usa **FLAN-T5-small com LoRA em CPU**. A escolha do modelo considerou o computador disponível: cerca de 6 GB de RAM, vídeo integrado AMD e ausência de CUDA.
 
-## Funcionalidades
+## Estado do experimento
 
-- preparação, anonimização e curadoria de exemplos clínicos sintéticos;
-- fine-tuning supervisionado de um modelo LLaMA com quantização em 4 bits e adaptadores LoRA;
-- recuperação de trechos de protocolos com indicação de fonte;
-- consulta somente leitura a prontuários e exames em SQLite;
-- identificação de exames pendentes e sinais de alerta;
-- pipeline LangChain que recebe o modelo ajustado e contexto institucional;
-- fluxo LangGraph com estado tipado, nós especializados e rotas condicionais;
-- validação de saída, aviso de revisão humana e log JSONL para auditoria;
-- avaliação de anonimização, recuperação, segurança e qualidade das respostas.
+- Ajuste fino local realizado: 15 exemplos de treino, cinco de validação e cinco de teste.
+- Adaptador local: `models/clinical-t5-lora`.
+- Evidências versionáveis: [resultados de treinamento](docs/results/training.json), [curva](docs/results/loss.png) e [execução integrada](docs/results/system.json).
+- A perda de teste caiu de 3,3887 para 3,1454, mas a qualidade gerativa continua insuficiente: há cópia de instruções, mistura de idiomas e repetição.
+- O sistema retém respostas que não correspondam literalmente às evidências. O caso clínico integrado foi retido.
+- O vídeo ainda precisa ser gravado, conforme [roteiro](docs/roteiro_video.md).
 
 ## Estrutura
 
-```text
-.
-├── data/
-│   ├── raw/                  # exemplos, protocolos e registros sintéticos
-│   └── processed/            # artefatos gerados localmente
-├── docs/                     # relatório, diagramas e roteiro de demonstração
-├── notebooks/                # percurso completo, da preparação à avaliação
-├── scripts/                  # preparação dos dados e criação do SQLite
-├── src/clinical_assistant/   # implementação modular
-└── tests/                    # testes unitários e de integração
-```
+| Pasta | Conteúdo |
+|---|---|
+| `data/raw` | 25 exemplos e quatro protocolos sintéticos; CSV de pacientes e exames |
+| `data/processed` | partições e SQLite reconstruíveis |
+| `src/clinical_assistant` | preparação do prompt, modelo, recuperação, grafo, auditoria e avaliação |
+| `scripts` | preparação, avaliação integrada e execução de notebooks |
+| `notebooks` | percurso explicado em cinco cadernos com saídas salvas |
+| `docs` | relatório com arquitetura e descrição do modelo, roteiro e resultados |
+| `tests` | regressões com bancos temporários |
+| `models`, `.hf-cache`, `logs` | pesos e artefatos locais, excluídos do Git |
 
-## Instalação
+## Instalação em Windows
 
-Requer Python 3.11 ou 3.12.
+O ambiente reproduzido usa Windows e Python 3.12.10 de 64 bits. Instale essa versão de Python antes de criar o ambiente virtual. Não é necessário alterar o PATH se você usar o caminho completo do executável.
 
-```bash
+Em uma cópia nova do projeto, com Python instalado, execute na raiz:
+
+```powershell
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux/macOS
-source .venv/bin/activate
-
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-As dependências pesadas de treinamento são opcionais, pois o ajuste fino é indicado para ambiente com GPU:
+Para usar o Python local já instalado neste diretório:
 
-```bash
-python -m pip install -e ".[training]"
+```powershell
+.\.tools\python\python.exe -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Copie `.env.example` para `.env`. Tokens nunca devem ser versionados.
+Não é necessário ativar o ambiente. Isso evita alterações na política de execução do PowerShell. A lista de versões foi verificada no ambiente Windows/Python 3.12; outros sistemas precisam de validação própria.
 
-## Preparação dos dados
+O arquivo `requirements.txt` reúne as versões completas das dependências usadas no treinamento, na execução e nos testes. O `pyproject.toml` define os metadados e as dependências diretas do pacote; para reproduzir o ambiente, use o comando acima.
 
-```bash
-python scripts/prepare_data.py
-python scripts/init_database.py
+## Preparação
+
+```powershell
+.\.venv\Scripts\python.exe scripts/prepare_data.py
+.\.venv\Scripts\python.exe scripts/init_database.py
 ```
 
-O primeiro comando anonimiza e valida os exemplos, separa treino e teste e produz um relatório de curadoria. O segundo cria `data/processed/hospital.db` com pacientes e exames sintéticos. Ambos são determinísticos.
+A preparação valida os exemplos e escreve três partições fixas, sem sobreposição de identificadores. REC-007, o modelo de receita, permanece no treino. O inicializador do SQLite preserva uma base já existente. Para reconstruir, faça antes uma cópia e mova a base antiga para outro nome.
 
-## Execução local
+Todos os registros são sintéticos e estão incluídos em `data/raw`. Não é necessário baixar uma base médica externa. Os dados disponíveis são suficientes para um experimento exploratório, não para validar desempenho clínico.
 
-O modo demonstrativo não baixa modelos e permite verificar todo o fluxo:
+## Treinamento local
 
-```bash
-python -m clinical_assistant.cli --patient-id PAC-0001 --question "Quais exames estão pendentes e quais protocolos devem ser consultados?"
+```powershell
+$env:HF_HOME = "$PWD\.hf-cache"
+$env:HF_HUB_DISABLE_XET = "1"
+.\.venv\Scripts\python.exe -m clinical_assistant.training --epochs 6
 ```
 
-Para usar o adaptador treinado, defina no `.env`:
+O primeiro uso baixa `google/flan-t5-small` do Hugging Face, sem token, e exige internet e espaço livre para bibliotecas, cache e pesos. Reserve alguns GB. Em Windows, o aviso sobre ausência de symlinks não impede o download.
 
-```dotenv
-ASSISTANT_BACKEND=huggingface
-BASE_MODEL_ID=meta-llama/Llama-2-7b-hf
-ADAPTER_PATH=models/clinical-lora
+A execução salva o melhor adaptador por perda de validação, resultados e curva. Uma nova execução substitui os resultados e o adaptador desse experimento: copie-os antes caso deseje comparar execuções. O teste não participa da seleção da época.
+
+## Execução do assistente
+
+Modo de teste de software, com gerador determinístico:
+
+```powershell
+$env:ASSISTANT_BACKEND = "demo"
+.\.venv\Scripts\python.exe -m clinical_assistant.cli --patient-id PAC-0001 --question "Exames de acompanhamento de diabetes"
 ```
 
-O acesso ao modelo base no Hugging Face depende da aceitação de sua licença e de um token com permissão. Consulte o notebook `02_fine_tuning_lora.ipynb` para o treinamento em GPU.
+Modelo efetivamente ajustado:
 
-## Notebooks
-
-Execute na ordem:
-
-1. `01_preparacao_dados.ipynb` — inspeção, anonimização, curadoria e divisão;
-2. `02_fine_tuning_lora.ipynb` — tokenização, quantização, LoRA, treinamento e avaliação;
-3. `03_assistente_langchain.ipynb` — modelo customizado, prontuário e recuperação;
-4. `04_fluxo_langgraph.ipynb` — execução do grafo, alertas, validação e logs;
-5. `05_avaliacao.ipynb` — métricas e análise dos resultados.
-
-## Testes
-
-```bash
-pytest -q
+```powershell
+$env:ASSISTANT_BACKEND = "t5"
+$env:ADAPTER_PATH = "models/clinical-t5-lora"
+.\.venv\Scripts\python.exe -m clinical_assistant.cli --patient-id PAC-0001 --question "Exames de acompanhamento de diabetes"
+.\.venv\Scripts\python.exe scripts/evaluate_system.py
 ```
 
-Os testes não exigem GPU nem chamada externa. Eles verificam anonimização, consultas parametrizadas, recuperação de fontes, limites de atuação, roteamento do grafo e registro de auditoria.
+O retorno pode ser retido por falta de correspondência literal com o contexto. Esse bloqueio é um resultado esperado quando o modelo produz uma saída inadequada, não evidência de que respondeu corretamente. A avaliação salva também o rascunho sintético para análise.
 
-## Segurança e governança
+As configurações podem ser copiadas de `.env.example` para `.env`. Variáveis de ambiente já definidas têm precedência. Tokens nunca devem ser versionados. Os registros locais de auditoria ficam em `logs/audit.jsonl`.
 
-- Todos os dados incluídos no repositório são fictícios e identificados como sintéticos.
-- A camada de acesso aceita apenas identificadores no formato institucional e consultas SQL previamente definidas.
-- Entradas passam por remoção de identificadores pessoais antes de qualquer processamento pelo modelo.
-- Solicitações de prescrição, alteração autônoma de tratamento ou substituição de avaliação profissional são bloqueadas.
-- Sinais críticos produzem alerta de priorização, sem determinar diagnóstico ou conduta.
-- Cada resposta informa as fontes recuperadas, as etapas percorridas e a necessidade de validação humana.
-- O log registra hashes e metadados operacionais; não armazena a pergunta clínica em texto aberto.
+## Notebooks e testes
 
-Detalhes de arquitetura, decisões metodológicas, métricas e limitações estão em `docs/relatorio_tecnico.md`.
+Selecione `.venv/Scripts/python.exe` como interpretador no editor de notebooks. Execute os cadernos em ordem:
+
+1. [Preparação dos dados](notebooks/01_preparacao_dados.ipynb): privacidade e partições;
+2. [Treinamento LoRA](notebooks/02_treinamento_lora.ipynb): configuração e análise da curva;
+3. [Integração LangChain](notebooks/03_assistente_langchain.ipynb): consulta e inferência com o adaptador;
+4. [Fluxo LangGraph](notebooks/04_fluxo_langgraph.ipynb): bloqueios e auditoria;
+5. [Avaliação](notebooks/05_avaliacao.ipynb): comparação de modelos e testes.
+
+Para executar tudo em kernels novos e salvar saídas:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/execute_notebooks.py
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+O notebook 02 lê a evidência existente por padrão. Defina `RUN_TRAINING=True` nele para repetir o treinamento. Em um clone novo, os pesos não estão no Git: execute o treinamento antes dos notebooks 03–05.
+
+Os próprios arquivos `.ipynb` são a fonte dos cadernos e devem ser editados diretamente. Eles compartilham módulos de `src/clinical_assistant` e artefatos em disco, sem depender da memória de outro notebook.
+
+## Limites
+
+As regras textuais não cobrem toda a linguagem clínica. Correspondência literal não garante pertinência ou validade médica. Não há autenticação de profissionais, aprovação clínica eletrônica ou conexão com hospital. Alertas são exibidos localmente e não enviados a uma equipe. Os hashes dos logs não garantem anonimização irreversível.
+
+O [relatório técnico](docs/relatorio_tecnico.md) explica objetivos, conceitos, metodologia, arquitetura, resultados e limitações do experimento.

@@ -1,195 +1,117 @@
-"""Orquestração segura do atendimento com StateGraph."""
-
-from __future__ import annotations
-
-from typing import Any, Literal, TypedDict
-
-from langgraph.graph import END, START, StateGraph
-
+"""Fluxo com triagem anterior ao modelo e registro de falhas."""
+import time
+import uuid
+from typing import TypedDict, Any
+from langgraph.graph import StateGraph, START, END
 from .anonymization import anonymize_text
-from .audit import AuditLogger
 from .chains import build_clinical_chain
-from .data_access import ClinicalRepository
-from .retrieval import ProtocolRetriever
-from .safety import assess_input, safe_fallback, validate_output
-
+from .safety import assess_input, validate_output, safe_fallback, HUMAN_REVIEW_NOTICE, CRITICAL_NOTICE, REFUSAL
 
 class AssistantState(TypedDict, total=False):
     question: str
     anonymized_question: str
     patient_id: str
-    redactions: dict[str, int]
     patient_context: str
-    pending_exams: list[dict[str, str]]
-    sources: list[dict[str, Any]]
+    pending_exams: list
+    sources: list
+    alerts: list
     critical: bool
-    alerts: list[str]
     prescription_request: bool
+    redactions: dict
     draft: str
     answer: str
     output_valid: bool
-    validation_reasons: list[str]
+    validation_reasons: list
     route: str
-    steps: list[str]
-
+    steps: list
+    request_id: str
+    backend: str
 
 class ClinicalAssistantGraph:
     def __init__(self, repository, retriever, generator, audit_logger):
-        self.repository: ClinicalRepository = repository
-        self.retriever: ProtocolRetriever = retriever
+        self.repository, self.retriever = repository, retriever
+        self.generator, self.audit_logger = generator, audit_logger
         self.chain = build_clinical_chain(generator)
-        self.audit_logger: AuditLogger = audit_logger
         self.graph = self._build()
 
-    @staticmethod
-    def _append_step(state: AssistantState, step: str) -> list[str]:
-        return [*state.get("steps", []), step]
+    def sanitize(self, state):
+        clean = anonymize_text(state["question"])
+        risk = assess_input(clean.text)
+        return dict(anonymized_question=clean.text, redactions=clean.redactions,
+            critical=risk.critical, alerts=list(risk.alerts), prescription_request=risk.prescription_request,
+            steps=["entrada tratada", "triagem textual executada"])
 
-    def sanitize(self, state: AssistantState) -> dict[str, Any]:
-        result = anonymize_text(state["question"])
-        return {
-            "anonymized_question": result.text,
-            "redactions": result.redactions,
-            "steps": self._append_step(state, "entrada anonimizada"),
-        }
+    def route_input(self, state):
+        if state["critical"]: return "alert"
+        if state["prescription_request"]: return "refuse"
+        return "load_patient"
 
-    def load_patient(self, state: AssistantState) -> dict[str, Any]:
-        context = self.repository.get_patient_context(state["patient_id"])
-        if context is None:
-            patient_text = "identificador não encontrado na base estruturada"
-            pending: list[dict[str, str]] = []
-        else:
-            patient_text = context.as_prompt_context()
-            pending = list(context.pending_exams)
-        return {
-            "patient_context": patient_text,
-            "pending_exams": pending,
-            "steps": self._append_step(state, "prontuário estruturado consultado"),
-        }
+    def alert(self, state):
+        return dict(answer=CRITICAL_NOTICE + " " + HUMAN_REVIEW_NOTICE, route="alerta_prioritario",
+            output_valid=False, steps=state["steps"] + ["alerta emitido sem chamar o modelo"])
 
-    def detect_risk(self, state: AssistantState) -> dict[str, Any]:
-        assessment = assess_input(state["anonymized_question"])
-        return {
-            "critical": assessment.critical,
-            "alerts": list(assessment.alerts),
-            "prescription_request": assessment.prescription_request,
-            "steps": self._append_step(state, "limites e sinais de alerta avaliados"),
-        }
+    def refuse(self, state):
+        return dict(answer=REFUSAL + " " + HUMAN_REVIEW_NOTICE, route="recusa",
+            output_valid=False, steps=state["steps"] + ["solicitação recusada antes da geração"])
 
-    def retrieve_protocols(self, state: AssistantState) -> dict[str, Any]:
-        query = " ".join(
-            [
-                state["anonymized_question"],
-                state["anonymized_question"],
-                state["anonymized_question"],
-                state.get("patient_context", ""),
-            ]
-        )
-        retrieved = self.retriever.retrieve(query, k=2)
-        sources = [
-            {
-                "source_id": item.source_id,
-                "title": item.title,
-                "excerpt": item.excerpt,
-                "score": item.score,
-                "path": item.path,
-            }
-            for item in retrieved
-        ]
-        return {
-            "sources": sources,
-            "steps": self._append_step(state, f"{len(sources)} protocolo(s) recuperado(s)"),
-        }
+    def load_patient(self, state):
+        patient = self.repository.get_patient_context(state["patient_id"])
+        return dict(patient_context=patient.as_prompt_context() if patient else "",
+            pending_exams=list(patient.pending_exams) if patient else [],
+            steps=state["steps"] + ["consulta SQLite somente leitura"])
 
-    def generate(self, state: AssistantState) -> dict[str, Any]:
-        if state.get("prescription_request"):
-            question = (
-                state["anonymized_question"]
-                + "\nA solicitação envolve prescrição; recuse essa ação e ofereça apenas organização de dados."
-            )
-        else:
-            question = state["anonymized_question"]
-        protocol_context = "\n\n".join(
-            f"[{source['source_id']}] {source['excerpt']}" for source in state.get("sources", [])
-        ) or "Nenhum protocolo relevante localizado."
-        draft = self.chain.invoke(
-            {
-                "question": question,
-                "patient_context": state.get("patient_context", "não informado"),
-                "protocol_context": protocol_context,
-            }
-        )
-        return {"draft": str(draft), "steps": self._append_step(state, "resposta preliminar gerada")}
+    def retrieve(self, state):
+        # Apenas a pergunta define a cobertura; comorbidades não justificam fontes para perguntas alheias.
+        docs = self.retriever.retrieve(state["anonymized_question"], k=2, minimum_score=0.08)
+        return dict(sources=[vars(d) for d in docs], steps=state["steps"] + ["busca lexical dos protocolos"])
 
-    def validate(self, state: AssistantState) -> dict[str, Any]:
-        valid, reasons = validate_output(state["draft"], bool(state.get("sources")))
-        return {
-            "output_valid": valid,
-            "validation_reasons": list(reasons),
-            "steps": self._append_step(state, "resposta preliminar validada"),
-        }
+    def route_context(self, state):
+        return "generate" if state["patient_context"] and state["sources"] else "fallback"
 
-    @staticmethod
-    def validation_route(state: AssistantState) -> Literal["finalize", "fallback"]:
-        return "finalize" if state.get("output_valid") else "fallback"
+    def generate(self, state):
+        protocol = "\n\n".join(s["excerpt"] for s in state["sources"])
+        result = str(self.chain.invoke(dict(question=state["anonymized_question"],
+            patient_context=state["patient_context"], protocol_context=protocol)))
+        valid, reasons = validate_output(result, bool(state["sources"]), state["patient_context"] + "\n" + protocol)
+        return dict(draft=result, output_valid=valid, validation_reasons=list(reasons),
+            steps=state["steps"] + ["geração concluída", "verificação literal de evidências"])
 
-    def finalize(self, state: AssistantState) -> dict[str, Any]:
-        alert = ""
-        if state.get("critical"):
-            alert = (
-                "ALERTA DE PRIORIZAÇÃO: há sinais informados que justificam avaliação presencial imediata. "
-                "Não aguarde a resposta do sistema para acionar a equipe.\n\n"
-            )
-        citations = "\n".join(
-            f"- {source['source_id']}: {source['title']} (relevância {source['score']:.3f})"
-            for source in state.get("sources", [])
-        )
-        answer = f"{alert}{state['draft']}\n\nFontes institucionais:\n{citations}"
-        return {
-            "answer": answer,
-            "route": "resposta_validada",
-            "steps": self._append_step(state, "resposta final montada com fontes"),
-        }
+    def finalize(self, state):
+        sources = "\n".join(f"[{s['source_id']}] {s['title']} — versão {s['version']}" for s in state["sources"])
+        return dict(answer=state["draft"] + "\n\nFontes recuperadas:\n" + sources + "\n" + HUMAN_REVIEW_NOTICE,
+            route="trecho_para_revisao", steps=state["steps"] + ["trecho disponibilizado para revisão"])
 
-    def fallback(self, state: AssistantState) -> dict[str, Any]:
-        return {
-            "answer": safe_fallback(tuple(state.get("validation_reasons", []))),
-            "route": "bloqueio_de_seguranca",
-            "steps": self._append_step(state, "saída substituída por resposta segura"),
-        }
-
-    def audit(self, state: AssistantState) -> dict[str, Any]:
-        self.audit_logger.write(dict(state))
-        return {"steps": self._append_step(state, "evento registrado para auditoria")}
+    def fallback(self, state):
+        reasons = state.get("validation_reasons") or ["paciente ausente ou contexto insuficiente"]
+        return dict(answer=safe_fallback(reasons), output_valid=False, validation_reasons=reasons,
+            route="bloqueio_de_seguranca", steps=state["steps"] + ["resposta retida"])
 
     def _build(self):
-        workflow = StateGraph(AssistantState)
-        workflow.add_node("sanitize", self.sanitize)
-        workflow.add_node("load_patient", self.load_patient)
-        workflow.add_node("detect_risk", self.detect_risk)
-        workflow.add_node("retrieve_protocols", self.retrieve_protocols)
-        workflow.add_node("generate", self.generate)
-        workflow.add_node("validate", self.validate)
-        workflow.add_node("finalize", self.finalize)
-        workflow.add_node("fallback", self.fallback)
-        workflow.add_node("audit", self.audit)
-        workflow.add_edge(START, "sanitize")
-        workflow.add_edge("sanitize", "load_patient")
-        workflow.add_edge("load_patient", "detect_risk")
-        workflow.add_edge("detect_risk", "retrieve_protocols")
-        workflow.add_edge("retrieve_protocols", "generate")
-        workflow.add_edge("generate", "validate")
-        workflow.add_conditional_edges(
-            "validate",
-            self.validation_route,
-            {"finalize": "finalize", "fallback": "fallback"},
-        )
-        workflow.add_edge("finalize", "audit")
-        workflow.add_edge("fallback", "audit")
-        workflow.add_edge("audit", END)
-        return workflow.compile()
+        graph = StateGraph(AssistantState)
+        for name in ("sanitize", "alert", "refuse", "load_patient", "retrieve", "generate", "finalize", "fallback"):
+            graph.add_node(name, getattr(self, name))
+        graph.add_edge(START, "sanitize")
+        graph.add_conditional_edges("sanitize", self.route_input,
+            {"alert": "alert", "refuse": "refuse", "load_patient": "load_patient"})
+        graph.add_edge("load_patient", "retrieve")
+        graph.add_conditional_edges("retrieve", self.route_context, {"generate": "generate", "fallback": "fallback"})
+        graph.add_conditional_edges("generate", lambda s: "finalize" if s["output_valid"] else "fallback",
+            {"finalize": "finalize", "fallback": "fallback"})
+        for name in ("alert", "refuse", "finalize", "fallback"): graph.add_edge(name, END)
+        return graph.compile()
 
-    def invoke(self, question: str, patient_id: str) -> AssistantState:
-        return self.graph.invoke(
-            {"question": question, "patient_id": patient_id, "steps": []}
-        )
+    def invoke(self, question, patient_id):
+        start = time.perf_counter()
+        state = dict(question=question, patient_id=patient_id, steps=[], request_id=str(uuid.uuid4()),
+                     backend=type(self.generator).__name__)
+        try:
+            for updates in self.graph.stream(state, stream_mode="updates"):
+                for update in updates.values():
+                    state.update(update)
+            return state
+        except Exception as exc:
+            state.update(route="erro_operacional", error_type=type(exc).__name__, output_valid=False)
+            raise
+        finally:
+            state["elapsed_seconds"] = round(time.perf_counter() - start, 4)
+            self.audit_logger.write(state)
