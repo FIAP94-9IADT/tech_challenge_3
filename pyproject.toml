@@ -29,10 +29,6 @@ training = [
   "transformers==4.51.3",
   "sentencepiece==0.2.0",
 ]
-
-[project.scripts]
-clinical-assistant = "clinical_assistant.cli:main"
-
 [tool.setuptools]
 package-dir = {"" = "src"}
 
