@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="610" viewBox="0 0 1100 610" role="img" aria-label="Fluxo de decisão do assistente">
+  <style>text{font-family:Arial,sans-serif;font-size:16px;fill:#17324d}.node{stroke:#315c84;stroke-width:2;rx:12}.blue{fill:#e8f1fa}.red{fill:#fde9e7}.yellow{fill:#fff4cc}.edge{stroke:#315c84;stroke-width:2;fill:none;marker-end:url(#arrow)}.label{font-size:13px;fill:#315c84}</style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#315c84"/></marker></defs>
+  <rect class="node blue" x="400" y="30" width="300" height="55"/><text x="550" y="63" text-anchor="middle">Entrada e anonimização</text>
+  <rect class="node blue" x="400" y="130" width="300" height="55"/><text x="550" y="163" text-anchor="middle">Triagem de risco</text>
+  <rect class="node red" x="60" y="250" width="230" height="55"/><text x="175" y="283" text-anchor="middle">Alerta local</text>
+  <rect class="node blue" x="435" y="250" width="230" height="55"/><text x="550" y="283" text-anchor="middle">Consulta estruturada</text>
+  <rect class="node red" x="810" y="250" width="230" height="55"/><text x="925" y="283" text-anchor="middle">Recusa</text>
+  <rect class="node blue" x="400" y="360" width="300" height="55"/><text x="550" y="393" text-anchor="middle">Recuperação de protocolos</text>
+  <rect class="node yellow" x="160" y="495" width="260" height="55"/><text x="290" y="528" text-anchor="middle">Retenção segura</text>
+  <rect class="node blue" x="690" y="465" width="250" height="55"/><text x="815" y="498" text-anchor="middle">Geração com LLM</text>
+  <rect class="node blue" x="690" y="550" width="250" height="45"/><text x="815" y="578" text-anchor="middle">Verificação e fontes</text>
+  <path class="edge" d="M550 85V130"/><path class="edge" d="M400 157L290 260"/><text class="label" x="300" y="190">sinal crítico</text>
+  <path class="edge" d="M550 185V250"/><text class="label" x="562" y="222">sem risco</text><path class="edge" d="M700 157L810 260"/><text class="label" x="755" y="190">pedido impróprio</text>
+  <path class="edge" d="M550 305V360"/><path class="edge" d="M470 415L355 495"/><text class="label" x="360" y="455">sem contexto</text>
+  <path class="edge" d="M630 415L755 465"/><text class="label" x="650" y="448">com contexto</text><path class="edge" d="M815 520V550"/><path class="edge" d="M690 573L420 530"/><text class="label" x="510" y="570">saída não aceita</text>
+</svg>

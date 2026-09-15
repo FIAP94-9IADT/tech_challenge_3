@@ -1,4 +1,4 @@
-"""Executa os cadernos em kernels novos e persiste saídas reais."""
+"""Executa notebooks em kernels novos para verificação local."""
 import sys
 from pathlib import Path
 import nbformat
@@ -17,5 +17,4 @@ for path in sorted((root / "notebooks").glob("*.ipynb")):
         if km.has_kernel:
             km.shutdown_kernel(now=True)
     nbformat.validate(nb)
-    nbformat.write(nb, path)
     print(path.name, "executado", flush=True)

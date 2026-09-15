@@ -1,65 +1,54 @@
 # Assistente clínico institucional
 
-Experimento acadêmico com corpus sintético, ajuste fino LoRA, consulta SQLite, recuperação lexical de protocolos, LangChain e LangGraph. O modelo organiza texto para revisão profissional. Não há execução de condutas ou envio externo de alertas.
+Este repositório apresenta um protótipo local para organizar informações clínicas sintéticas antes da revisão de um profissional. Ele combina quatro elementos: ajuste fino de um modelo de linguagem, consulta a dados estruturados, recuperação de protocolos e um fluxo de decisão que aplica limites antes de permitir uma resposta.
 
-O treinamento local usa **FLAN-T5-small com LoRA em CPU**. A escolha do modelo considerou o computador disponível: cerca de 6 GB de RAM, vídeo integrado AMD e ausência de CUDA.
+O protótipo não diagnostica, não prescreve, não altera prontuários e não envia alertas externos. Todas as informações clínicas presentes no projeto são sintéticas.
 
-## Estado do experimento
+## Como o projeto funciona
 
-- Ajuste fino local realizado: 15 exemplos de treino, cinco de validação e cinco de teste.
-- Adaptador local: `models/clinical-t5-lora`.
-- Evidências versionáveis: [resultados de treinamento](docs/results/training.json), [curva](docs/results/loss.png) e [execução integrada](docs/results/system.json).
-- A perda de teste caiu de 3,3887 para 3,1454, mas a qualidade gerativa continua insuficiente: há cópia de instruções, mistura de idiomas e repetição.
-- O sistema retém respostas que não correspondam literalmente às evidências. O caso clínico integrado foi retido.
-- O vídeo ainda precisa ser gravado, conforme [roteiro](docs/roteiro_video.md).
+1. O corpus reúne perguntas frequentes, protocolos, exemplos de laudo, procedimentos, um modelo de receita sem conteúdo prescritivo e situações de segurança.
+2. A preparação verifica campos obrigatórios, remove formatos diretos de identificação reconhecidos, identifica duplicidades e divide os exemplos entre treino, validação e teste.
+3. O treinamento carrega o modelo FLAN-T5-small e aplica LoRA. Essa técnica mantém os pesos originais do modelo e treina um adaptador menor, adequado ao ambiente local.
+4. Na consulta, a aplicação lê o paciente no SQLite em modo somente leitura e recupera os protocolos mais relacionados à pergunta por comparação lexical.
+5. O LangChain monta o prompt com pergunta, dados do paciente e protocolos. O LangGraph decide se deve emitir um alerta, recusar a solicitação, continuar para geração ou reter a saída.
+6. A saída somente é disponibilizada quando passa pelas verificações de contexto e segurança. A resposta inclui as fontes recuperadas e o aviso de revisão profissional.
 
 ## Estrutura
 
-| Pasta | Conteúdo |
+| Local | Finalidade |
 |---|---|
-| `data/raw` | 25 exemplos e quatro protocolos sintéticos; CSV de pacientes e exames |
-| `data/processed` | partições e SQLite reconstruíveis |
-| `src/clinical_assistant` | preparação do prompt, modelo, recuperação, grafo, auditoria e avaliação |
-| `scripts` | preparação, avaliação integrada e execução de notebooks |
-| `notebooks` | percurso explicado em cinco cadernos com saídas salvas |
-| `docs` | relatório com arquitetura e descrição do modelo, roteiro e resultados |
-| `tests` | regressões com bancos temporários |
-| `models`, `.hf-cache`, `logs` | pesos e artefatos locais, excluídos do Git |
+| `data/raw` | dados sintéticos de entrada: exemplos, protocolos, pacientes e exames |
+| `src/clinical_assistant` | módulos da aplicação, do treinamento, da recuperação e do fluxo |
+| `scripts` | preparação, banco SQLite, avaliação, execução de notebooks e geração do PNG do fluxo |
+| `notebooks` | explicação executável de cada etapa |
+| `docs` | relatório, roteiro de apresentação e diagrama do fluxo |
+| `tests` | verificações automatizadas de dados, segurança, recuperação e grafo |
 
-## Instalação em Windows
+Os diretórios `data/processed`, `models`, `logs`, `artifacts` e `docs/results` são produzidos localmente durante a execução. Eles estão no `.gitignore` e não devem ser incluídos no repositório.
 
-O ambiente reproduzido usa Windows e Python 3.12.10 de 64 bits. Instale essa versão de Python antes de criar o ambiente virtual. Não é necessário alterar o PATH se você usar o caminho completo do executável.
+## Instalação
 
-Em uma cópia nova do projeto, com Python instalado, execute na raiz:
+Use Python 3.11 ou 3.12 de 64 bits. Na raiz do projeto, crie o ambiente e instale as dependências:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Para usar o Python local já instalado neste diretório:
+Não é necessário ativar o ambiente virtual. Os exemplos abaixo usam diretamente o executável instalado nele.
 
-```powershell
-.\.tools\python\python.exe -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
+## Preparação dos dados e do banco
 
-Não é necessário ativar o ambiente. Isso evita alterações na política de execução do PowerShell. A lista de versões foi verificada no ambiente Windows/Python 3.12; outros sistemas precisam de validação própria.
-
-O arquivo `requirements.txt` reúne as versões completas das dependências usadas no treinamento, na execução e nos testes. O `pyproject.toml` define os metadados e as dependências diretas do pacote; para reproduzir o ambiente, use o comando acima.
-
-## Preparação
+Execute os comandos a seguir antes do treinamento ou da aplicação:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/prepare_data.py
 .\.venv\Scripts\python.exe scripts/init_database.py
 ```
 
-A preparação valida os exemplos e escreve três partições fixas, sem sobreposição de identificadores. REC-007, o modelo de receita, permanece no treino. O inicializador do SQLite preserva uma base já existente. Para reconstruir, faça antes uma cópia e mova a base antiga para outro nome.
+O primeiro comando cria as partições em `data/processed`. São 15 exemplos de treino, cinco de validação e cinco de teste. A validação escolhe a época do treinamento; o teste é reservado para a comparação final. O segundo comando cria o arquivo SQLite somente quando ele ainda não existe.
 
-Todos os registros são sintéticos e estão incluídos em `data/raw`. Não é necessário baixar uma base médica externa. Os dados disponíveis são suficientes para um experimento exploratório, não para validar desempenho clínico.
-
-## Treinamento local
+## Treinamento da LLM
 
 ```powershell
 $env:HF_HOME = "$PWD\.hf-cache"
@@ -67,55 +56,59 @@ $env:HF_HUB_DISABLE_XET = "1"
 .\.venv\Scripts\python.exe -m clinical_assistant.training --epochs 6
 ```
 
-O primeiro uso baixa `google/flan-t5-small` do Hugging Face, sem token, e exige internet e espaço livre para bibliotecas, cache e pesos. Reserve alguns GB. Em Windows, o aviso sobre ausência de symlinks não impede o download.
+Na primeira execução, o modelo base é obtido e armazenado no cache local. O treinamento salva o adaptador LoRA em `models/clinical-t5-lora` e registra métricas, comparações de respostas e a curva de perdas em `docs/results`. Esses arquivos são evidências locais de execução e não são versionados.
 
-A execução salva o melhor adaptador por perda de validação, resultados e curva. Uma nova execução substitui os resultados e o adaptador desse experimento: copie-os antes caso deseje comparar execuções. O teste não participa da seleção da época.
+## Execução da aplicação
 
-## Execução do assistente
-
-Modo de teste de software, com gerador determinístico:
-
-```powershell
-$env:ASSISTANT_BACKEND = "demo"
-.\.venv\Scripts\python.exe -m clinical_assistant.cli --patient-id PAC-0001 --question "Exames de acompanhamento de diabetes"
-```
-
-Modelo efetivamente ajustado:
+O modo `demo` é um gerador determinístico usado somente para testes da orquestração. Para carregar a LLM ajustada, utilize o modo `t5` depois de executar o treinamento:
 
 ```powershell
 $env:ASSISTANT_BACKEND = "t5"
 $env:ADAPTER_PATH = "models/clinical-t5-lora"
 .\.venv\Scripts\python.exe -m clinical_assistant.cli --patient-id PAC-0001 --question "Exames de acompanhamento de diabetes"
-.\.venv\Scripts\python.exe scripts/evaluate_system.py
 ```
 
-O retorno pode ser retido por falta de correspondência literal com o contexto. Esse bloqueio é um resultado esperado quando o modelo produz uma saída inadequada, não evidência de que respondeu corretamente. A avaliação salva também o rascunho sintético para análise.
+O retorno pode ser retido quando a resposta gerada não encontra suporte literal no contexto recuperado. Essa retenção é intencional: ela reduz saídas não sustentadas, mas não substitui avaliação clínica.
 
-As configurações podem ser copiadas de `.env.example` para `.env`. Variáveis de ambiente já definidas têm precedência. Tokens nunca devem ser versionados. Os registros locais de auditoria ficam em `logs/audit.jsonl`.
+## Fluxo de decisão
 
-## Notebooks e testes
+O diagrama está disponível em [docs/langgraph_flow.svg](docs/langgraph_flow.svg). Para gerar uma imagem PNG localmente, execute:
 
-Selecione `.venv/Scripts/python.exe` como interpretador no editor de notebooks. Execute os cadernos em ordem:
+```powershell
+.\.venv\Scripts\python.exe scripts/render_langgraph_flow.py
+```
 
-1. [Preparação dos dados](notebooks/01_preparacao_dados.ipynb): privacidade e partições;
-2. [Treinamento LoRA](notebooks/02_treinamento_lora.ipynb): configuração e análise da curva;
-3. [Integração LangChain](notebooks/03_assistente_langchain.ipynb): consulta e inferência com o adaptador;
-4. [Fluxo LangGraph](notebooks/04_fluxo_langgraph.ipynb): bloqueios e auditoria;
-5. [Avaliação](notebooks/05_avaliacao.ipynb): comparação de modelos e testes.
+O PNG é salvo em `artifacts/langgraph_flow.png`. O fluxo inicia pela anonimização e pela triagem textual. Sinais críticos encerram o processo em um alerta local; solicitações de prescrição ou diagnóstico são recusadas; somente perguntas com paciente e fontes recuperadas seguem para a LLM. A saída gerada passa por uma verificação final antes de ser apresentada para revisão.
 
-Para executar tudo em kernels novos e salvar saídas:
+## Notebooks, avaliação e testes
+
+Os notebooks devem ser executados nesta ordem:
+
+1. `01_preparacao_dados.ipynb` — curadoria, anonimização e partições;
+2. `02_treinamento_lora.ipynb` — ajuste fino e leitura dos resultados locais;
+3. `03_assistente_langchain.ipynb` — consulta estruturada, recuperação e prompt;
+4. `04_fluxo_langgraph.ipynb` — decisões do grafo, auditoria e diagrama;
+5. `05_avaliacao.ipynb` — avaliação das respostas e testes automatizados.
+
+Para executar os notebooks com um kernel novo e depois rodar a suíte de testes:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/execute_notebooks.py
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-O notebook 02 lê a evidência existente por padrão. Defina `RUN_TRAINING=True` nele para repetir o treinamento. Em um clone novo, os pesos não estão no Git: execute o treinamento antes dos notebooks 03–05.
+As saídas dos notebooks não devem ser salvas no repositório. Para limpar saídas existentes antes de versionar, use o comando de limpeza descrito na seção seguinte.
 
-Os próprios arquivos `.ipynb` são a fonte dos cadernos e devem ser editados diretamente. Eles compartilham módulos de `src/clinical_assistant` e artefatos em disco, sem depender da memória de outro notebook.
+## Limpeza antes de versionar
 
-## Limites
+```powershell
+.\.venv\Scripts\python.exe scripts/clear_notebook_outputs.py
+```
 
-As regras textuais não cobrem toda a linguagem clínica. Correspondência literal não garante pertinência ou validade médica. Não há autenticação de profissionais, aprovação clínica eletrônica ou conexão com hospital. Alertas são exibidos localmente e não enviados a uma equipe. Os hashes dos logs não garantem anonimização irreversível.
+Confira também `git status` antes de criar um commit. Apenas código-fonte, dados sintéticos de entrada, notebooks sem saídas e documentação devem aparecer como arquivos versionáveis.
 
-O [relatório técnico](docs/relatorio_tecnico.md) explica objetivos, conceitos, metodologia, arquitetura, resultados e limitações do experimento.
+## Limitações
+
+O corpus é pequeno e sintético. A anonimização usa padrões conhecidos e não garante remoção irreversível de toda informação identificável. A recuperação lexical depende de palavras em comum e pode não reconhecer sinônimos. O modelo ajustado pode repetir instruções ou produzir texto inadequado; por isso o fluxo aplica retenção e não autoriza condutas. O protótipo não foi validado por especialistas nem integrado a sistemas hospitalares.
+
+O relatório detalha as escolhas e a avaliação em [docs/relatorio_tecnico.md](docs/relatorio_tecnico.md). O roteiro da demonstração está em [docs/roteiro_video.md](docs/roteiro_video.md).

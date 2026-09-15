@@ -10,4 +10,5 @@ def test_partitions_and_prescription_coverage(root, tmp_path):
     assert not sets["train"] & sets["test"]
     assert not sets["validation"] & sets["test"]
     assert "REC-007" in sets["train"]
+    assert report["synthetic_data"] is True
     assert all(len(v["categories"]) == 5 for v in report["partitions"].values())

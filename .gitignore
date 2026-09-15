@@ -211,10 +211,13 @@ logs/
 data/processed/*.db
 data/processed/*.jsonl
 data/processed/*.json
+data/external/
 models/
 .tools/
 .venv-gpu/
 .hf-cache/
+docs/results/
+artifacts/
 *.sqlite
 
 # Marimo
