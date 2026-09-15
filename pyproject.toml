@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clinical-assistant"
+version = "0.1.0"
+description = "Assistente clínico institucional com LangChain, LangGraph e LoRA"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "langchain-core>=1.0,<2.0",
+  "langgraph>=1.0,<2.0",
+  "python-dotenv>=1.0,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ipykernel>=6.29,<8.0",
+  "nbformat>=5.10,<6.0",
+  "pytest>=8.0,<10.0",
+  "nbclient>=0.10,<1",
+  "matplotlib>=3.9,<4",
+]
+training = [
+  "accelerate==1.6.0",
+  "peft==0.15.2",
+  "torch==2.7.1",
+  "transformers==4.51.3",
+  "sentencepiece==0.2.0",
+]
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -p no:cacheprovider"

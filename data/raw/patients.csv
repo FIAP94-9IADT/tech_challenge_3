@@ -1,0 +1,4 @@
+patient_id,birth_year,sex,conditions,allergies,last_visit
+PAC-0001,1968,F,"hipertensão;diabetes tipo 2",penicilina,2026-06-18
+PAC-0002,1979,M,hipertensão,nenhuma conhecida,2026-07-02
+PAC-0003,1955,F,"diabetes tipo 2;doença renal crônica",dipirona,2026-06-25
